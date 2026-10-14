@@ -1,0 +1,83 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "ask-claude",
+  "title": "Ask Claude",
+  "description": "Chat with Claude using your own Anthropic API key, with saved conversations and every model your key can use.",
+  "icon": "thread-icon.png",
+  "author": "kushal_somaliya",
+  "categories": ["Productivity"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "ask-claude",
+      "title": "Ask Claude",
+      "description": "Ask Claude anything and keep the conversation going.",
+      "mode": "view",
+      "icon": "thread-icon.png",
+      "arguments": [
+        {
+          "name": "prompt",
+          "placeholder": "Ask anything",
+          "type": "text",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "preferences": [
+    {
+      "name": "apiKey",
+      "title": "Anthropic API Key",
+      "description": "Your own key from platform.claude.com (starts with sk-ant-). Raycast stores it securely on this Mac; it is only ever sent to api.anthropic.com.",
+      "type": "password",
+      "placeholder": "sk-ant-...",
+      "required": true
+    },
+    {
+      "name": "webSearch",
+      "title": "Web Search",
+      "label": "Let Claude search the web when a question needs current info",
+      "description": "Searches cost about $0.01 each plus tokens, billed to your API key.",
+      "type": "checkbox",
+      "default": true,
+      "required": false
+    },
+    {
+      "name": "webFetch",
+      "title": "Read Links",
+      "label": "Let Claude open and read links you share or that search finds",
+      "description": "No extra fee; the page text counts as tokens (capped at about 30k per page).",
+      "type": "checkbox",
+      "default": true,
+      "required": false
+    },
+    {
+      "name": "maxSearches",
+      "title": "Max Searches per Question",
+      "description": "Upper limit on web searches for one question (1–100).",
+      "type": "textfield",
+      "default": "50",
+      "required": false
+    },
+    {
+      "name": "searchCountry",
+      "title": "Search Country",
+      "description": "Two-letter country code used to localise search results, e.g. IN or US. Leave empty to skip.",
+      "type": "textfield",
+      "default": "IN",
+      "required": false
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.83.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.3",
+    "typescript": "^5.4.5"
+  },
+  "scripts": {
+    "dev": "ray develop",
+    "build": "ray build"
+  }
+}
