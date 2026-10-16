@@ -82,17 +82,44 @@ export function toApiMessages(messages: Msg[]): { role: "user" | "assistant"; co
 }
 
 /**
- * Your message as gray inline-code chips (one per line). The backtick fence is made longer
- * than any backtick run inside the text, so messages containing ` can't break out of the chip.
+ * Longest pill line, in characters. A 62-character prompt fitted on one line in Raycast's
+ * reply pane, so 54 leaves a margin; longer lines are split at spaces into several whole pills
+ * instead of one pill that Raycast breaks mid-line.
+ */
+const PILL_WIDTH = 54;
+
+/** Splits one line into pieces of at most `width` characters, at spaces where possible. */
+export function wrapLine(line: string, width = PILL_WIDTH): string[] {
+  const pieces: string[] = [];
+  let current = "";
+  for (const word of line.split(/\s+/).filter(Boolean)) {
+    // A single word longer than a whole pill (e.g. a URL) is cut into pill-sized chunks.
+    const chunks = word.length > width ? word.match(new RegExp(`.{1,${width}}`, "g"))! : [word];
+    for (const chunk of chunks) {
+      if (!current) current = chunk;
+      else if (current.length + 1 + chunk.length <= width) current += ` ${chunk}`;
+      else {
+        pieces.push(current);
+        current = chunk;
+      }
+    }
+  }
+  if (current) pieces.push(current);
+  return pieces;
+}
+
+/**
+ * Your message as gray inline-code pills, one whole pill per line. The backtick fence is made
+ * longer than any backtick run inside the text, so messages containing ` can't break out.
  */
 export function chip(text: string): string {
   return text
     .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => {
-      const longest = Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length));
+    .flatMap((line) => wrapLine(line))
+    .map((piece) => {
+      const longest = Math.max(0, ...(piece.match(/`+/g) ?? []).map((run) => run.length));
       const fence = "`".repeat(longest + 1);
-      return `${fence} ${line.trim()} ${fence}`;
+      return `${fence} ${piece} ${fence}`;
     })
     .join("  \n");
 }
@@ -730,7 +757,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
       <Action.CopyToClipboard
         title="Copy Last Answer"
         content={lastAnswer.content}
-        shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
+        shortcut={{ modifiers: ["cmd"], key: "c" }}
       />
     ) : null;
 
@@ -751,27 +778,23 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
       </ActionPanel.Submenu>
     );
 
-    // The first action is what Enter (and ⌘1–9 on another chat) runs, so it depends on context:
-    // typed text → send it; another chat → open it; the open chat → copy its answer;
-    // an empty new chat → pick a model.
-    let primary: "send" | "open" | "copy" | "model" | null = null;
-    if (input.trim()) primary = "send";
-    else if (!isOpen) primary = "open";
-    else if (copyLastAnswer) primary = "copy";
-    else if (!hasMessages) primary = "model";
+    // The first action is what Enter runs. Raycast's ⌘1–9 first selects (opens) a chat and then
+    // runs that same action, so it must never copy or close: on the open chat it is Send, which
+    // does nothing while the bar is empty. On any other chat it just opens it.
+    const primary: "send" | "open" = input.trim() || isOpen ? "send" : "open";
 
     return (
       <ActionPanel>
         <ActionPanel.Section>
-          {primary === "send" && (
+          {primary === "send" ? (
             <Action
               title={hasMessages ? "Send Reply" : "Send"}
               icon={Icon.ArrowRight}
               onAction={() => ask(input, chat.id)}
             />
+          ) : (
+            <Action title="Open Chat" icon={Icon.Message} onAction={() => select(chat.id)} />
           )}
-          {primary === "open" && <Action title="Open Chat" icon={Icon.Message} onAction={() => select(chat.id)} />}
-          {primary === "model" && modelMenu}
           {copyLastAnswer}
           {streamingId && (
             <Action
@@ -785,7 +808,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
         </ActionPanel.Section>
 
         <ActionPanel.Section title={`Model · ${currentModel}`}>
-          {primary !== "model" && modelMenu}
+          {modelMenu}
           <Action title="Refresh Model List" icon={Icon.ArrowClockwise} onAction={() => loadModels(true)} />
         </ActionPanel.Section>
 
