@@ -19,7 +19,14 @@ import { useEffect, useRef, useState } from "react";
 // Types & constants
 // ---------------------------------------------------------------------------
 
-type Prefs = { apiKey: string; webSearch?: boolean; maxSearches?: string; searchCountry?: string; webFetch?: boolean };
+type Prefs = {
+  apiKey: string;
+  webSearch?: boolean;
+  maxSearches?: string;
+  searchCountry?: string;
+  webFetch?: boolean;
+  aiTitles?: boolean;
+};
 type Source = { url: string; title?: string };
 type Msg = {
   role: "user" | "assistant";
@@ -30,7 +37,7 @@ type Msg = {
   activity?: "search" | "fetch"; // what Claude is doing right now, if anything
   sources?: Source[]; // pages Claude cited or read
 };
-type Chat = { id: string; title: string; messages: Msg[]; updatedAt: number };
+type Chat = { id: string; title: string; messages: Msg[]; updatedAt: number; aiTitled?: boolean };
 type ModelInfo = { id: string; name: string };
 
 const FALLBACK_MODEL = "claude-haiku-5-5"; // only used until the live model list loads
@@ -247,6 +254,44 @@ export async function fetchModels(apiKey: string): Promise<ModelInfo[]> {
   if (!res.ok) throw await apiError(res);
   const json = (await res.json()) as { data?: { id: string; display_name?: string }[] };
   return (json.data ?? []).map((m) => ({ id: m.id, name: m.display_name || fallbackModelName(m.id) }));
+}
+
+/** Cleans a model-written title: one line, no quotes or trailing punctuation, at most 60 chars. */
+export function cleanTitle(raw: string): string {
+  const line =
+    raw
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean) ?? "";
+  const stripped = line
+    .replace(/^(title:\s*)/i, "")
+    .replace(/^[#*_"'“”‘’`\s]+|[#*_"'“”‘’`\s.!?:;,]+$/g, "")
+    .trim();
+  return stripped.length > 60 ? `${stripped.slice(0, 57)}…` : stripped;
+}
+
+/** A short title (2–6 words) for a conversation, written by a fast model. */
+export async function generateTitle(apiKey: string, model: string, question: string, answer: string): Promise<string> {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify({
+      model,
+      max_tokens: 30,
+      system:
+        "You name conversations. Reply with a specific title of 2 to 6 words in the language of the conversation. " +
+        "No quotes, no emoji, no trailing punctuation, nothing else.",
+      messages: [
+        {
+          role: "user",
+          content: `<question>\n${question.slice(0, 1500)}\n</question>\n<answer>\n${answer.slice(0, 1500)}\n</answer>\n\nTitle:`,
+        },
+      ],
+    }),
+  });
+  if (!res.ok) throw await apiError(res);
+  const json = (await res.json()) as { content?: { type: string; text?: string }[] };
+  return cleanTitle(json.content?.find((b) => b.type === "text")?.text ?? "");
 }
 
 function systemPrompt(webSearch: boolean): string {
@@ -475,6 +520,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
   const chatsRef = useRef<Chat[]>([]);
   const selectedRef = useRef<string | undefined>(undefined);
   const modelRef = useRef(FALLBACK_MODEL);
+  const modelsRef = useRef<ModelInfo[]>([]);
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -498,6 +544,11 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
     setSelectedId(id);
   }
 
+  function storeModels(list: ModelInfo[]) {
+    modelsRef.current = list;
+    setModels(list);
+  }
+
   function applyModel(id: string) {
     modelRef.current = id;
     setModel(id);
@@ -511,19 +562,19 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
       null,
     );
     if (cached && !force && Date.now() - cached.at < MODELS_TTL_MS) {
-      setModels(cached.list);
+      storeModels(cached.list);
       return cached.list;
     }
     const apiKey = resolveApiKey(prefs);
     if (!apiKey) return cached?.list;
     try {
       const list = await fetchModels(apiKey);
-      setModels(list);
+      storeModels(list);
       await LocalStorage.setItem(STORE.models, JSON.stringify({ at: Date.now(), list }));
       if (force) await showToast({ style: Toast.Style.Success, title: `Found ${list.length} models` });
       return list;
     } catch (err) {
-      if (cached) setModels(cached.list);
+      if (cached) storeModels(cached.list);
       if (force) {
         await showToast({
           style: Toast.Style.Failure,
@@ -542,6 +593,26 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
   }
 
   // ---- chat actions -------------------------------------------------------
+
+  /**
+   * After a chat's first answer, asks the fastest model for a short title (once per chat).
+   * Failures are ignored: the chat keeps its question-based title.
+   */
+  async function maybeGenerateTitle(chatId: string) {
+    if (prefs.aiTitles === false) return;
+    const apiKey = resolveApiKey(prefs);
+    const chat = chatsRef.current.find((c) => c.id === chatId);
+    if (!apiKey || !chat || chat.aiTitled || chat.messages.length !== 2) return;
+    const [q, a] = chat.messages;
+    if (a.error || !a.content.trim()) return;
+    const fast = modelsRef.current.find((m) => m.id.includes("haiku"))?.id ?? modelRef.current;
+    try {
+      const title = await generateTitle(apiKey, fast, q.content, a.content);
+      if (title) commit((prev) => prev.map((c) => (c.id === chatId ? { ...c, title, aiTitled: true } : c)), true);
+    } catch {
+      /* titles are a nicety */
+    }
+  }
 
   async function ask(text: string, targetId?: string) {
     const question = text.trim();
@@ -640,6 +711,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
       setStreamingId(null);
       commit((prev) => prev, true);
     }
+    if (isFirst) maybeGenerateTitle(chatId);
   }
 
   function newChat() {

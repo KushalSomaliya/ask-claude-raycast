@@ -5,7 +5,9 @@
   "description": "Chat with Claude using your own Anthropic API key, with saved conversations and every model your key can use.",
   "icon": "thread-icon.png",
   "author": "kushal_somaliya",
-  "categories": ["Productivity"],
+  "categories": [
+    "Productivity"
+  ],
   "license": "MIT",
   "commands": [
     {
@@ -65,6 +67,15 @@
       "description": "Two-letter country code used to localise search results, e.g. IN or US. Leave empty to skip.",
       "type": "textfield",
       "default": "IN",
+      "required": false
+    },
+    {
+      "name": "aiTitles",
+      "title": "Chat Titles",
+      "label": "Let Claude write a short title for each new chat",
+      "description": "One tiny extra request per chat, using the fastest model your key has.",
+      "type": "checkbox",
+      "default": true,
       "required": false
     }
   ],

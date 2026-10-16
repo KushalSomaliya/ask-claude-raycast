@@ -28,6 +28,10 @@ Claude searches the web on its own when a question needs current information (pr
 
 Claude can also **read links**: paste a URL ("summarize https://…") and it opens the page. It only opens links from your messages or its own search results. There's no extra fee; the page text counts as tokens, capped at about 30k per page. Turn it off with **Read Links** in Configure Extension.
 
+## Chat titles
+
+After a chat's first answer, Claude gives it a short title (2–6 words) using the fastest model your key has. It's one tiny extra request per chat. Turn it off with **Chat Titles** in Configure Extension.
+
 ## Shortcuts
 
 | Keys | Action |
