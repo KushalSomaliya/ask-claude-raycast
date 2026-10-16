@@ -32,6 +32,12 @@ Claude can also **read links**: paste a URL ("summarize https://…") and it ope
 
 After a chat's first answer, Claude gives it a short title (2–6 words) using the fastest model your key has. It's one tiny extra request per chat. Turn it off with **Chat Titles** in Configure Extension.
 
+## Updating
+
+Run **Update Ask Claude** in Raycast. It checks GitHub for a newer version, shows what changed, and installs it with **Enter**: it pulls the code, reinstalls dependencies if they changed, and rebuilds (the same as `git pull && npm run dev`, then `Ctrl+C`). It takes about 10 seconds and runs in the background, so you can close the window. When it's done, press **Enter** to open the new version.
+
+If this copy was installed from a zip, the command offers **Connect and Update** once, which links the folder to GitHub. Your chats and API key are stored in Raycast and aren't affected. If the extension lives somewhere other than `~/raycast-extensions/ask-claude-ext`, set **Extension Folder** in the command's preferences.
+
 ## Shortcuts
 
 | Keys | Action |

@@ -1,5 +1,9 @@
 # Ask Claude Changelog
 
+## [Update Command] - 2026-10-16
+
+- New command: Update Ask Claude checks GitHub for a newer version and installs it, and can link a copy installed from a zip
+
 ## [Chat Titles] - 2026-10-16
 
 - Claude writes a short title for each new chat after its first answer (can be turned off in preferences)
