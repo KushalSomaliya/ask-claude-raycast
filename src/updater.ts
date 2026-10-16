@@ -168,8 +168,23 @@ export type Status = {
 
 export const isRepo = (folder: string) => existsSync(join(folder, ".git"));
 
-/** Fetches the followed branch and lists commits that aren't on this Mac yet. */
-export async function checkForUpdates(folder: string, tools: Tools): Promise<Status> {
+let inflight: { folder: string; promise: Promise<Status> } | null = null;
+
+/**
+ * Fetches the followed branch and lists commits that aren't on this Mac yet. Calls made while a
+ * check is already running share it, so the background check and the update screen never run
+ * two `git fetch`es in the same folder at once.
+ */
+export function checkForUpdates(folder: string, tools: Tools): Promise<Status> {
+  if (inflight && inflight.folder === folder) return inflight.promise;
+  const promise = fetchStatus(folder, tools).finally(() => {
+    if (inflight?.promise === promise) inflight = null;
+  });
+  inflight = { folder, promise };
+  return promise;
+}
+
+async function fetchStatus(folder: string, tools: Tools): Promise<Status> {
   const branch = await git(folder, tools, ["rev-parse", "--abbrev-ref", "HEAD"]);
   await git(folder, tools, ["fetch", "--quiet", "origin", branch], 90000);
   const remoteRef = `origin/${branch}`;
@@ -284,13 +299,24 @@ export function settleInterrupted(run: Run, now = Date.now()): Run {
   };
 }
 
-/** Whether to show this run when the command opens, instead of checking for updates. */
+const RECENT_MS = 2 * 60 * 1000;
+
+/** Whether the update screen should show this run instead of checking for updates. */
 export function shouldShowRun(run: Run, now = Date.now()): boolean {
   if (run.state === "running") return true;
-  if (run.state === "failed") return !run.dismissed;
-  // Raycast restarts this command when the new build loads, so a result that was already on
-  // screen a moment ago is shown again rather than replaced by "You're up to date".
-  return !run.seen || now - (run.finishedAt ?? 0) < 2 * 60 * 1000;
+  if (run.dismissed) return false;
+  if (run.state === "failed") return true;
+  // Raycast restarts Ask Claude when the new build loads, so a result that was on screen a
+  // moment ago is shown again rather than replaced by "You're up to date".
+  return !run.seen || now - (run.finishedAt ?? 0) < RECENT_MS;
+}
+
+/** Whether Ask Claude should open the update screen by itself when it starts. */
+export function shouldOpenOnLaunch(run: Run, now = Date.now()): boolean {
+  if (run.state === "running") return true;
+  if (run.dismissed) return false;
+  if (run.state === "failed") return !run.seen;
+  return !run.seen || now - (run.finishedAt ?? 0) < RECENT_MS;
 }
 
 export type StartOptions = {
@@ -364,4 +390,62 @@ export function startRun(dir: string, opts: StartOptions): Run {
   });
   child.unref();
   return run;
+}
+
+// ---------------------------------------------------------------------------
+// The last check, remembered so Ask Claude can show the count without checking every time
+// ---------------------------------------------------------------------------
+
+export const CHECK_EVERY_MS = 60 * 60 * 1000;
+
+export type UpdateCheck = { checkedAt: number; folder: string; count: number; head: string; remote: string; branch: string };
+
+const checkFile = (dir: string) => join(dir, "update-check.json");
+
+export function readUpdateCheck(dir: string): UpdateCheck | null {
+  try {
+    const check = JSON.parse(readFileSync(checkFile(dir), "utf8")) as UpdateCheck;
+    return check && typeof check.count === "number" ? check : null;
+  } catch {
+    return null;
+  }
+}
+
+export function recordUpdateCheck(dir: string, status: Status): UpdateCheck {
+  const check: UpdateCheck = {
+    checkedAt: Date.now(),
+    folder: status.folder,
+    count: status.commits.length,
+    head: status.head,
+    remote: status.remote,
+    branch: status.branch,
+  };
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(checkFile(dir), JSON.stringify(check, null, 2));
+  } catch {
+    /* only a cache */
+  }
+  return check;
+}
+
+/**
+ * The remembered number of updates, or null when it can't be trusted: never checked, checked for
+ * another folder, older than an hour, or an update has finished since.
+ */
+export function freshUpdateCount(dir: string, folder: string, now = Date.now()): number | null {
+  const check = readUpdateCheck(dir);
+  if (!check || check.folder !== folder || now - check.checkedAt > CHECK_EVERY_MS) return null;
+  const run = readRun(dir);
+  if (run && (run.state === "running" || (run.finishedAt ?? 0) > check.checkedAt)) return null;
+  return check.count;
+}
+
+/** The last known count, even if old (shown until a fresh check replaces it). */
+export function lastUpdateCount(dir: string, folder: string): number {
+  const check = readUpdateCheck(dir);
+  const run = readRun(dir);
+  if (!check || check.folder !== folder) return 0;
+  if (run && (run.state === "running" || (run.finishedAt ?? 0) > check.checkedAt)) return 0;
+  return check.count;
 }

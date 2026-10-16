@@ -34,9 +34,13 @@ After a chat's first answer, Claude gives it a short title (2–6 words) using t
 
 ## Updating
 
-Run **Update Ask Claude** in Raycast. It checks GitHub for a newer version, shows what changed, and installs it with **Enter**: it pulls the code, reinstalls dependencies if they changed, and rebuilds (the same as `git pull && npm run dev`, then `Ctrl+C`). It takes about 10 seconds and runs in the background, so you can close the window. When it's done, press **Enter** to open the new version.
+Ask Claude checks GitHub for a new version when you open it, at most once an hour. When there is one, Raycast's root search shows **2 updates available** next to Ask Claude, and its actions (`⌘K`) show **Update Ask Claude (2)**.
 
-If this copy was installed from a zip, the command offers **Connect and Update** once, which links the folder to GitHub. Your chats and API key are stored in Raycast and aren't affected. If the extension lives somewhere other than `~/raycast-extensions/ask-claude-ext`, set **Extension Folder** in the command's preferences.
+Press `⌘U` to see what's new, then **Enter** to install. It pulls the code, reinstalls dependencies if they changed, and rebuilds (the same as `git pull && npm run dev`, then `Ctrl+C`). It takes about 10 seconds and runs in the background; Ask Claude reloads with the new version and shows the result.
+
+If this copy was installed from a zip, `⌘U` offers **Connect and Update** once, which links the folder to GitHub. Your chats and API key are stored in Raycast and aren't affected. If the extension lives somewhere other than `~/raycast-extensions/ask-claude-ext`, set **Extension Folder** in Configure Extension; turn the automatic check off with **Automatic Update Check** there (`⌘U` still works).
+
+If Ask Claude ever won't open, update from Terminal instead: run `git pull && npm run dev` in the extension folder.
 
 ## Shortcuts
 
@@ -49,13 +53,14 @@ If this copy was installed from a zip, the command offers **Connect and Update**
 | `⌘.` | Stop the answer |
 | `⌘E` | Show the full conversation (long chats show the latest messages first) |
 | `⌘↵` | Copy last answer |
+| `⌘U` | Update (or check for updates) |
 | `⌘⌥C` | Copy conversation |
 | `⌃X` | Delete chat |
 
 ## Privacy and security
 
 - Your API key is stored by Raycast in its secure preference storage. It is **not** written to any file in this folder, so sharing this folder never shares your key.
-- The extension talks to one server only: `https://api.anthropic.com`.
+- Your questions and chats go to one server only: `https://api.anthropic.com`. The update check talks to this extension's GitHub repo (a plain `git fetch`), which sends nothing about you or your chats.
 - Chats and the model list are saved in Raycast's local storage on your Mac. Nothing is sent anywhere else.
 - Error messages are scrubbed of anything that looks like an API key.
 - If a key ever leaks, delete it in the Claude Console and create a new one.

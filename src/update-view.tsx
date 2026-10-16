@@ -4,21 +4,18 @@ import {
   Alert,
   Detail,
   Icon,
-  LaunchType,
   Toast,
   confirmAlert,
   environment,
-  getPreferenceValues,
-  launchCommand,
   openExtensionPreferences,
   showToast,
+  useNavigation,
 } from "@raycast/api";
 import { existsSync } from "fs";
 import { join } from "path";
 import { useEffect, useRef, useState } from "react";
 import {
   Commit,
-  DEFAULT_FOLDER,
   Run,
   RunMode,
   RunStep,
@@ -26,18 +23,16 @@ import {
   Tools,
   UpdateError,
   checkForUpdates,
-  expandHome,
   findTools,
   isRepo,
   readLog,
   readRun,
+  recordUpdateCheck,
   saveRun,
   settleInterrupted,
   shouldShowRun,
   startRun,
 } from "./updater";
-
-type Prefs = { sourceFolder?: string };
 
 /** What the check found, shown when no update is running or just finished. */
 type Phase =
@@ -92,7 +87,7 @@ function stepLine(step: RunStep, run: Run): string {
   }
 }
 
-/** Reads the last run when the command opens, so an update in progress (or just finished) is shown. */
+/** Reads the last run when the screen opens, so an update in progress (or just finished) is shown. */
 function loadRun(): Run | null {
   const saved = readRun(supportDir);
   if (!saved) return null;
@@ -101,10 +96,13 @@ function loadRun(): Run | null {
   return shouldShowRun(run) ? run : null;
 }
 
-export default function Command() {
-  const prefs = getPreferenceValues<Prefs>();
-  const folder = expandHome(prefs.sourceFolder?.trim() || DEFAULT_FOLDER);
-
+/**
+ * The update screen, opened from Ask Claude's actions (or by Ask Claude itself when it restarts
+ * in the middle of an update). `onCount` reports how many updates are waiting, for the action
+ * title and the subtitle in Raycast's root search.
+ */
+export function UpdateView({ folder, onCount }: { folder: string; onCount?: (count: number) => void }) {
+  const { pop } = useNavigation();
   const [run, setRun] = useState<Run | null>(loadRun);
   const [logLines, setLogLines] = useState<string[]>(() => (run ? readLog(run.logFile, 40) : []));
   const [showLog, setShowLog] = useState(false);
@@ -113,6 +111,8 @@ export default function Command() {
   const toolsRef = useRef<Tools | null>(null);
   const startedRef = useRef(false);
   const lastUpdateRef = useRef<number | undefined>(run?.updatedAt);
+  const runRef = useRef<Run | null>(run);
+  runRef.current = run;
 
   async function getTools(): Promise<Tools> {
     if (toolsRef.current) return toolsRef.current;
@@ -129,6 +129,8 @@ export default function Command() {
       if (!existsSync(join(folder, "package.json"))) return setPhase({ kind: "missing-folder" });
       if (!isRepo(folder)) return setPhase({ kind: "not-linked" });
       const status = await checkForUpdates(folder, t);
+      recordUpdateCheck(supportDir, status);
+      onCount?.(status.commits.length);
       setPhase({ kind: status.commits.length ? "available" : "up-to-date", status });
     } catch (err) {
       setPhase({
@@ -172,12 +174,10 @@ export default function Command() {
     check();
   }
 
-  async function openAskClaude() {
-    try {
-      await launchCommand({ name: "ask-claude", type: LaunchType.UserInitiated });
-    } catch (err) {
-      await showToast({ style: Toast.Style.Failure, title: "Couldn't open Ask Claude", message: err instanceof Error ? err.message : String(err) });
-    }
+  /** Leaves a finished update and goes back to the chats. */
+  function backToChats() {
+    if (run && run.state !== "running") saveRun(supportDir, { ...run, seen: true, dismissed: true });
+    pop();
   }
 
   // First open: check for updates unless an update is running or just finished.
@@ -186,6 +186,14 @@ export default function Command() {
     startedRef.current = true;
     getTools();
     if (!run) check();
+    // Leaving the screen (Esc) after an update finished counts as having seen the result.
+    return () => {
+      const last = runRef.current;
+      if (last && last.state !== "running") {
+        const saved = readRun(supportDir);
+        if (saved?.id === last.id && !saved.dismissed) saveRun(supportDir, { ...saved, seen: true, dismissed: true });
+      }
+    };
   }, []);
 
   // While an update runs, follow its progress.
@@ -208,6 +216,7 @@ export default function Command() {
   // Remember that a result was shown, so it isn't shown again next time.
   useEffect(() => {
     if (run && run.state !== "running" && !run.seen) saveRun(supportDir, { ...run, seen: true });
+    if (run?.state === "done") onCount?.(0);
   }, [run?.id, run?.state]);
 
   // ---- content ------------------------------------------------------------
@@ -226,9 +235,9 @@ export default function Command() {
       title = "Ask Claude Updated";
       const version =
         run.mode === "connect"
-          ? `This copy is now connected to GitHub and on version \`${run.to ?? "?"}\`. From now on, Update Ask Claude can install new versions for you.`
+          ? `This copy is now connected to GitHub and on version \`${run.to ?? "?"}\`. From now on, Ask Claude can install new versions for you (\`⌘U\`).`
           : `Now on version \`${run.to ?? "?"}\`${run.from ? ` (was \`${run.from}\`)` : ""}.`;
-      markdown = `## ✓ Ask Claude is updated\n\n${version}${whatsNew}\n\nPress **Enter** to open Ask Claude.${showLog ? fullLog : ""}`;
+      markdown = `## ✓ Ask Claude is updated\n\n${version}${whatsNew}\n\nPress **Enter** to go back to your chats.${showLog ? fullLog : ""}`;
     } else {
       const details = run.details ? `\n\n${fence(run.details)}` : "";
       markdown =
@@ -242,7 +251,7 @@ export default function Command() {
         markdown = "## Checking for updates…";
         break;
       case "missing-folder":
-        markdown = `## Extension folder not found\n\nThere's no extension at \`${folder}\`.\n\nSet the right folder in the command's preferences (⌘K → Open Extension Preferences).`;
+        markdown = `## Extension folder not found\n\nThere's no extension at \`${folder}\`.\n\nSet the folder you installed it in as **Extension Folder** in the extension's preferences (press **Enter**).`;
         break;
       case "not-linked":
         markdown =
@@ -329,7 +338,7 @@ export default function Command() {
       actions={
         <ActionPanel>
           <ActionPanel.Section>
-            {run?.state === "done" ? <Action title="Open Ask Claude" icon={Icon.SpeechBubble} onAction={openAskClaude} /> : null}
+            {run?.state === "done" ? <Action title="Back to Chats" icon={Icon.Message} onAction={backToChats} /> : null}
             {run?.state === "failed" ? (
               <Action
                 title="Try Again"

@@ -24,23 +24,6 @@
           "required": false
         }
       ]
-    },
-    {
-      "name": "update-extension",
-      "title": "Update Ask Claude",
-      "description": "Check GitHub for a newer version of this extension and install it.",
-      "mode": "view",
-      "icon": "thread-icon.png",
-      "preferences": [
-        {
-          "name": "sourceFolder",
-          "title": "Extension Folder",
-          "description": "Where this extension's code lives on your Mac (the folder you ran npm run dev in).",
-          "type": "textfield",
-          "default": "~/raycast-extensions/ask-claude-ext",
-          "required": false
-        }
-      ]
     }
   ],
   "preferences": [
@@ -93,6 +76,23 @@
       "description": "One tiny extra request per chat, using the fastest model your key has.",
       "type": "checkbox",
       "default": true,
+      "required": false
+    },
+    {
+      "name": "updateCheck",
+      "title": "Automatic Update Check",
+      "label": "Look for a new version on GitHub when Ask Claude opens (at most once an hour)",
+      "description": "When there is one, the count shows next to Ask Claude in root search and in its actions. ⌘U always checks and installs, even with this off.",
+      "type": "checkbox",
+      "default": true,
+      "required": false
+    },
+    {
+      "name": "sourceFolder",
+      "title": "Extension Folder",
+      "description": "Where this extension's code lives on your Mac (the folder you ran npm run dev in). Used to install updates.",
+      "type": "textfield",
+      "default": "~/raycast-extensions/ask-claude-ext",
       "required": false
     }
   ],

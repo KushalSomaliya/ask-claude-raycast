@@ -12,8 +12,27 @@ import {
   getPreferenceValues,
   openExtensionPreferences,
   showToast,
+  updateCommandMetadata,
+  useNavigation,
 } from "@raycast/api";
+import { existsSync } from "fs";
+import { join } from "path";
 import { useEffect, useRef, useState } from "react";
+import { UpdateView } from "./update-view";
+import {
+  DEFAULT_FOLDER,
+  checkForUpdates,
+  expandHome,
+  findTools,
+  freshUpdateCount,
+  isRepo,
+  lastUpdateCount,
+  readRun,
+  recordUpdateCheck,
+  saveRun,
+  settleInterrupted,
+  shouldOpenOnLaunch,
+} from "./updater";
 
 // ---------------------------------------------------------------------------
 // Types & constants
@@ -26,6 +45,8 @@ type Prefs = {
   searchCountry?: string;
   webFetch?: boolean;
   aiTitles?: boolean;
+  sourceFolder?: string;
+  updateCheck?: boolean;
 };
 type Source = { url: string; title?: string };
 type Msg = {
@@ -557,6 +578,8 @@ export async function runAnswer(
 
 export default function Command(props: LaunchProps<{ arguments: { prompt?: string } }>) {
   const prefs = getPreferenceValues<Prefs>();
+  const { push } = useNavigation();
+  const folder = expandHome(prefs.sourceFolder?.trim() || DEFAULT_FOLDER);
 
   const [chats, setChats] = useState<Chat[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
@@ -566,6 +589,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
   const [expandedId, setExpandedId] = useState<string | null>(null); // chat showing its full history
   const [model, setModel] = useState(FALLBACK_MODEL);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [updateCount, setUpdateCount] = useState(() => lastUpdateCount(environment.supportPath, folder));
 
   // Refs mirror state so async code always sees the latest values.
   const chatsRef = useRef<Chat[]>([]);
@@ -799,6 +823,50 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
     select(created.id);
   }
 
+  // ---- updates ------------------------------------------------------------
+
+  /** Shows the number of waiting updates in the actions and next to Ask Claude in root search. */
+  function showUpdateCount(count: number) {
+    setUpdateCount(count);
+    updateCommandMetadata({ subtitle: count > 0 ? `${count} ${count === 1 ? "update" : "updates"} available` : null }).catch(() => {
+      /* cosmetic */
+    });
+  }
+
+  function openUpdates() {
+    push(<UpdateView folder={folder} onCount={showUpdateCount} />);
+  }
+
+  /** Checks GitHub for a newer version in the background, at most once an hour. Never shows errors. */
+  async function checkForUpdatesQuietly() {
+    if (prefs.updateCheck === false) return showUpdateCount(0);
+    const dir = environment.supportPath;
+    const run = readRun(dir);
+    if (run?.state === "running") return; // the update itself is using the folder
+    const fresh = freshUpdateCount(dir, folder);
+    if (fresh !== null) return setUpdateCount(fresh);
+    try {
+      if (!existsSync(join(folder, "package.json")) || !isRepo(folder)) return showUpdateCount(0);
+      const status = await checkForUpdates(folder, await findTools());
+      recordUpdateCheck(dir, status);
+      showUpdateCount(status.commits.length);
+    } catch {
+      /* offline, or git isn't set up: try again next time */
+    }
+  }
+
+  /** Raycast restarts Ask Claude when an update's new build loads; pick the update screen back up. */
+  function resumeUpdate(): boolean {
+    const dir = environment.supportPath;
+    const saved = readRun(dir);
+    if (!saved) return false;
+    const run = settleInterrupted(saved);
+    if (run !== saved) saveRun(dir, run);
+    if (!shouldOpenOnLaunch(run)) return false;
+    openUpdates();
+    return true;
+  }
+
   // ---- launch -------------------------------------------------------------
 
   useEffect(() => {
@@ -816,6 +884,8 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
       select(fresh.id);
       if (savedModel) applyModel(savedModel);
       setLoaded(true);
+
+      if (!resumeUpdate()) checkForUpdatesQuietly();
 
       if (initialText) ask(initialText);
 
@@ -881,6 +951,15 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
     // does nothing while the bar is empty. On any other chat it just opens it.
     const primary: "send" | "open" = input.trim() || isOpen ? "send" : "open";
 
+    const updateAction = (
+      <Action
+        title={updateCount > 0 ? `Update Ask Claude (${updateCount})` : "Check for Updates"}
+        icon={updateCount > 0 ? Icon.Download : Icon.ArrowClockwise}
+        shortcut={{ modifiers: ["cmd"], key: "u" }}
+        onAction={openUpdates}
+      />
+    );
+
     return (
       <ActionPanel>
         <ActionPanel.Section>
@@ -903,6 +982,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
             />
           )}
           <Action title="New Chat" icon={Icon.Plus} shortcut={{ modifiers: ["cmd"], key: "n" }} onAction={newChat} />
+          {updateCount > 0 ? updateAction : null}
         </ActionPanel.Section>
 
         <ActionPanel.Section title={`Model · ${currentModel}`}>
@@ -943,6 +1023,8 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
             onAction={deleteAll}
           />
         </ActionPanel.Section>
+
+        {updateCount > 0 ? null : <ActionPanel.Section>{updateAction}</ActionPanel.Section>}
       </ActionPanel>
     );
   };

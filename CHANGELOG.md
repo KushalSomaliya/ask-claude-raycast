@@ -1,5 +1,11 @@
 # Ask Claude Changelog
 
+## [Updates in Ask Claude] - 2026-10-16
+
+- Updates now live inside Ask Claude: `⌘U` shows what's new and installs it
+- Ask Claude checks for a new version in the background (at most once an hour) and shows the count in root search and in its actions
+- The separate Update Ask Claude command is gone; its Extension Folder setting moved to Configure Extension
+
 ## [Update Command] - 2026-10-16
 
 - New command: Update Ask Claude checks GitHub for a newer version and installs it, and can link a copy installed from a zip
