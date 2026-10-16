@@ -163,7 +163,7 @@ export type Status = {
   head: string;
   remote: string;
   commits: Commit[]; // newest first
-  dirty: string[]; // files changed locally
+  dirty: string[]; // tracked files changed locally (untracked files like package-lock.json are fine)
 };
 
 export const isRepo = (folder: string) => existsSync(join(folder, ".git"));
@@ -177,11 +177,11 @@ export async function checkForUpdates(folder: string, tools: Tools): Promise<Sta
     git(folder, tools, ["rev-parse", "--short", "HEAD"]),
     git(folder, tools, ["rev-parse", "--short", remoteRef]),
     git(folder, tools, ["log", "--format=%h%x09%s", `HEAD..${remoteRef}`]),
-    git(folder, tools, ["status", "--porcelain"]),
+    git(folder, tools, ["status", "--porcelain", "--untracked-files=no"]),
   ]);
   const dirty = porcelain
     .split("\n")
-    .map((l) => l.slice(3).trim())
+    .map((l) => l.replace(/^\s*\S{1,2}\s+/, "").trim()) // "XY path"; the first line may have lost its leading space
     .filter(Boolean);
   return { folder, branch, head, remote, commits: parseCommits(log), dirty };
 }
