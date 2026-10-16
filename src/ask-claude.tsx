@@ -61,6 +61,57 @@ function parse<T>(raw: string | undefined, fallback: T): T {
   }
 }
 
+/**
+ * Reads saved chats in any format, never throwing. Besides this version's list of chats, it
+ * accepts the format written by the "v2-rebuild" branch ({ version: 2, chats: [{ turns }] }),
+ * converting it back so chats made while trying that version aren't lost.
+ */
+export function loadSavedChats(raw: string | undefined): Chat[] {
+  const data = parse<unknown>(raw, []);
+  const list: unknown[] = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { chats?: unknown })?.chats)
+      ? ((data as { chats: unknown[] }).chats)
+      : [];
+  return list.map(toChat).filter((c): c is Chat => c !== null && c.messages.length > 0);
+}
+
+type V2Turn = {
+  question?: unknown;
+  answer?: unknown;
+  status?: unknown;
+  error?: unknown;
+  searches?: string[];
+  fetches?: string[];
+  sources?: Source[];
+};
+
+function toChat(raw: unknown): Chat | null {
+  if (!raw || typeof raw !== "object") return null;
+  const c = raw as { id?: unknown; title?: unknown; updatedAt?: unknown; messages?: unknown; turns?: unknown; titleSource?: unknown; aiTitled?: unknown };
+  if (typeof c.id !== "string") return null;
+  const updatedAt = typeof c.updatedAt === "number" ? c.updatedAt : Date.now();
+  let messages: Msg[] = [];
+  if (Array.isArray(c.messages)) {
+    messages = (c.messages as Msg[]).filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string");
+  } else if (Array.isArray(c.turns)) {
+    for (const t of c.turns as V2Turn[]) {
+      if (!t || typeof t.question !== "string" || !t.question.trim()) continue;
+      const answer = typeof t.answer === "string" ? t.answer : "";
+      const failed = t.status === "error" || !answer.trim();
+      const reason = typeof t.error === "string" && t.error ? t.error : "Stopped before Claude replied";
+      messages.push(
+        { role: "user", content: t.question },
+        failed
+          ? { role: "assistant", content: t.status === "error" ? `Couldn't get a response (${reason})` : "Stopped before Claude replied.", error: true }
+          : { role: "assistant", content: answer, searches: t.searches, fetches: t.fetches, sources: t.sources },
+      );
+    }
+  }
+  const title = typeof c.title === "string" && c.title.trim() ? c.title : titleFrom(messages[0]?.content ?? "") || "New chat";
+  return { id: c.id, title, messages, updatedAt, aiTitled: c.aiTitled === true || c.titleSource === "ai" || c.titleSource === "user" };
+}
+
 function titleFrom(question: string): string {
   const oneLine = question.replace(/\s+/g, " ").trim();
   return oneLine.length > 60 ? `${oneLine.slice(0, 57)}…` : oneLine;
@@ -759,7 +810,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
         LocalStorage.getItem<string>(STORE.chats),
         LocalStorage.getItem<string>(STORE.model),
       ]);
-      const saved = parse<Chat[]>(rawChats, []).filter((c) => c.messages?.length);
+      const saved = loadSavedChats(rawChats);
       const fresh = emptyChat();
       commit(() => [fresh, ...saved]);
       select(fresh.id);
