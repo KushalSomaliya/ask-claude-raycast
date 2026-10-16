@@ -81,19 +81,21 @@ export function toApiMessages(messages: Msg[]): { role: "user" | "assistant"; co
   return out;
 }
 
+/** Backslash-escapes characters that would otherwise turn a prompt into markdown formatting. */
+export function escapeMarkdown(text: string): string {
+  return text.replace(/([\\`*_[\]<>#|~])/g, "\\$1");
+}
+
 /**
- * Your message as gray inline-code chips (one per line). The backtick fence is made longer
- * than any backtick run inside the text, so messages containing ` can't break out of the chip.
+ * Your message as an italic quote, one quoted line per line you typed, so it never looks like
+ * the `code` pills in Claude's answers. Long lines wrap inside the quote.
  */
 export function chip(text: string): string {
   return text
     .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => {
-      const longest = Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length));
-      const fence = "`".repeat(longest + 1);
-      return `${fence} ${line.trim()} ${fence}`;
-    })
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `> *${escapeMarkdown(line)}*`)
     .join("  \n");
 }
 
