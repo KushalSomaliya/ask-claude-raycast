@@ -34,7 +34,7 @@ After a chat's first answer, Claude gives it a short title (2–6 words) using t
 
 ## Updating
 
-Ask Claude checks GitHub for a new version when you open it, at most once an hour. When there is one, Raycast's root search shows **2 updates available** next to Ask Claude, and its actions (`⌘K`) show **Update Ask Claude (2)**.
+Ask Claude checks GitHub for a new version when you open it, at most once an hour. When there is one, Raycast's root search shows **2 updates available** next to Ask Claude, and its actions (`⌘K`) show **Update Ask Claude · 2 new**.
 
 Press `⌘U` to see what's new, then **Enter** to install. It pulls the code, reinstalls dependencies if they changed, and rebuilds (the same as `git pull && npm run dev`, then `Ctrl+C`). It takes about 10 seconds and runs in the background; Ask Claude reloads with the new version and shows the result.
 

@@ -953,8 +953,8 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
 
     const updateAction = (
       <Action
-        title={updateCount > 0 ? `Update Ask Claude (${updateCount})` : "Check for Updates"}
-        icon={updateCount > 0 ? Icon.Download : Icon.ArrowClockwise}
+        title={updateCount > 0 ? `Update Ask Claude · ${updateCount} new` : "Check for Updates"}
+        icon={updateCount > 0 ? { source: Icon.Download, tintColor: "#D97757" } : Icon.ArrowClockwise}
         shortcut={{ modifiers: ["cmd"], key: "u" }}
         onAction={openUpdates}
       />
