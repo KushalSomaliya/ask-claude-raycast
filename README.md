@@ -38,7 +38,7 @@ Claude can also **read links**: paste a URL ("summarize https://…") and it ope
 | `⌘P` | Switch model |
 | `⌘.` | Stop the answer |
 | `⌘E` | Show the full conversation (long chats show the latest messages first) |
-| `⌘C` | Copy last answer |
+| `⌘↵` | Copy last answer |
 | `⌘⌥C` | Copy conversation |
 | `⌃X` | Delete chat |
 

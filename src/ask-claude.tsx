@@ -82,44 +82,17 @@ export function toApiMessages(messages: Msg[]): { role: "user" | "assistant"; co
 }
 
 /**
- * Longest pill line, in characters. A 62-character prompt fitted on one line in Raycast's
- * reply pane, so 54 leaves a margin; longer lines are split at spaces into several whole pills
- * instead of one pill that Raycast breaks mid-line.
- */
-const PILL_WIDTH = 54;
-
-/** Splits one line into pieces of at most `width` characters, at spaces where possible. */
-export function wrapLine(line: string, width = PILL_WIDTH): string[] {
-  const pieces: string[] = [];
-  let current = "";
-  for (const word of line.split(/\s+/).filter(Boolean)) {
-    // A single word longer than a whole pill (e.g. a URL) is cut into pill-sized chunks.
-    const chunks = word.length > width ? word.match(new RegExp(`.{1,${width}}`, "g"))! : [word];
-    for (const chunk of chunks) {
-      if (!current) current = chunk;
-      else if (current.length + 1 + chunk.length <= width) current += ` ${chunk}`;
-      else {
-        pieces.push(current);
-        current = chunk;
-      }
-    }
-  }
-  if (current) pieces.push(current);
-  return pieces;
-}
-
-/**
- * Your message as gray inline-code pills, one whole pill per line. The backtick fence is made
- * longer than any backtick run inside the text, so messages containing ` can't break out.
+ * Your message as gray inline-code chips (one per line). The backtick fence is made longer
+ * than any backtick run inside the text, so messages containing ` can't break out of the chip.
  */
 export function chip(text: string): string {
   return text
     .split("\n")
-    .flatMap((line) => wrapLine(line))
-    .map((piece) => {
-      const longest = Math.max(0, ...(piece.match(/`+/g) ?? []).map((run) => run.length));
+    .filter((line) => line.trim())
+    .map((line) => {
+      const longest = Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length));
       const fence = "`".repeat(longest + 1);
-      return `${fence} ${piece} ${fence}`;
+      return `${fence} ${line.trim()} ${fence}`;
     })
     .join("  \n");
 }
@@ -757,7 +730,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
       <Action.CopyToClipboard
         title="Copy Last Answer"
         content={lastAnswer.content}
-        shortcut={{ modifiers: ["cmd"], key: "c" }}
+        shortcut={{ modifiers: ["cmd"], key: "return" }}
       />
     ) : null;
 
