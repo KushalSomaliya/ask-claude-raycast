@@ -4,15 +4,29 @@ Chat with Claude from Raycast using your own Anthropic API key. Type a question,
 
 ## Install
 
-You need Node.js 20+ and Raycast.
+You need a Mac with [Raycast](https://raycast.com) and [Node.js](https://nodejs.org) 22 or newer (`brew install node`). Then paste this into Terminal:
 
 ```bash
-cd ask-claude-ext
+curl -fsSL https://raw.githubusercontent.com/KushalSomaliya/ask-claude-raycast/main/install.sh | bash
+```
+
+It downloads the extension to `~/raycast-extensions/ask-claude-ext`, installs what it needs, and adds it to Raycast, which takes about a minute. If macOS asks to install developer tools (for git), accept, then run the command again.
+
+Running it again is safe: it updates an existing install, and a copy that came from a zip is moved aside and replaced. Your API key and chats are stored in Raycast, so they're kept.
+
+<details>
+<summary>Install by hand instead</summary>
+
+```bash
+git clone https://github.com/KushalSomaliya/ask-claude-raycast.git ~/raycast-extensions/ask-claude-ext
+cd ~/raycast-extensions/ask-claude-ext
 npm install
 npm run dev
 ```
 
 When Terminal says **built extension successfully**, press `Ctrl+C`. The extension stays in Raycast.
+
+</details>
 
 ## Add your API key
 

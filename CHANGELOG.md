@@ -1,5 +1,9 @@
 # Ask Claude Changelog
 
+## [One-Line Install] - 2026-10-19
+
+- Install (or reinstall over a zip copy) with one Terminal command; see the README
+
 ## [Updates in Ask Claude] - 2026-10-16
 
 - Updates now live inside Ask Claude: `⌘U` shows what's new and installs it
