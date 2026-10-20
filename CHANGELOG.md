@@ -1,5 +1,10 @@
 # Ask Claude Changelog
 
+## [Images] - 2026-10-19
+
+- Paste a screenshot or image with ⌘V and ask Claude about it; ⌘⇧⌫ removes one before sending
+- Pasted images are deleted after 30 days by default (Keep Images in preferences)
+
 ## [One-Line Install] - 2026-10-19
 
 - Install (or reinstall over a zip copy) with one Terminal command; see the README

@@ -2,6 +2,7 @@ import {
   Action,
   ActionPanel,
   Alert,
+  Clipboard,
   Icon,
   LaunchProps,
   List,
@@ -15,10 +16,22 @@ import {
   updateCommandMetadata,
   useNavigation,
 } from "@raycast/api";
-import { existsSync } from "fs";
+import { existsSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { useEffect, useRef, useState } from "react";
 import { UpdateView } from "./update-view";
+import {
+  clipboardPath,
+  imageBlock,
+  imagesDir,
+  prepareImage,
+  pruneImages,
+  removeImages,
+  saveClipboardImage,
+  sniffImage,
+  thumbnails,
+} from "./images";
 import {
   DEFAULT_FOLDER,
   checkForUpdates,
@@ -45,6 +58,7 @@ type Prefs = {
   searchCountry?: string;
   webFetch?: boolean;
   aiTitles?: boolean;
+  keepImages?: string; // days to keep pasted images; "0" keeps them forever
   sourceFolder?: string;
   updateCheck?: boolean;
 };
@@ -52,6 +66,7 @@ type Source = { url: string; title?: string };
 type Msg = {
   role: "user" | "assistant";
   content: string;
+  images?: string[]; // pasted images, as file names in the images folder
   error?: boolean;
   searches?: string[]; // web search queries Claude ran for this answer
   fetches?: string[]; // pages Claude opened and read for this answer
@@ -147,17 +162,32 @@ function modelName(id: string, models: ModelInfo[]): string {
   return models.find((m) => m.id === id)?.name ?? fallbackModelName(id);
 }
 
+type Turn = { role: "user" | "assistant"; content: string; images?: string[] };
+
 /** Successful question/answer pairs only, so failed or stopped turns never confuse the API. */
-export function toApiMessages(messages: Msg[]): { role: "user" | "assistant"; content: string }[] {
-  const out: { role: "user" | "assistant"; content: string }[] = [];
+export function toApiMessages(messages: Msg[]): Turn[] {
+  const out: Turn[] = [];
   for (let i = 0; i + 1 < messages.length; i += 2) {
     const q = messages[i];
     const a = messages[i + 1];
     if (q.role === "user" && a.role === "assistant" && !a.error && a.content.trim()) {
-      out.push({ role: "user", content: q.content }, { role: "assistant", content: a.content });
+      out.push({ role: "user", content: q.content, ...(q.images?.length ? { images: q.images } : {}) }, { role: "assistant", content: a.content });
     }
   }
   return out;
+}
+
+/** Turns as the API wants them: a message with images becomes image blocks followed by its text. */
+export function withImages(turns: Turn[], dir: string): ApiMessage[] {
+  return turns.map((t) => {
+    const blocks = (t.images ?? []).map((name) => imageBlock(dir, name)).filter((b): b is Block => b !== null);
+    if (!blocks.length && t.images?.length) {
+      const note = "(An image was shared here but is no longer stored.)";
+      return { role: t.role, content: t.content ? `${note}\n${t.content}` : note };
+    }
+    if (!blocks.length) return { role: t.role, content: t.content };
+    return { role: t.role, content: t.content ? [...blocks, { type: "text", text: t.content }] : blocks };
+  });
 }
 
 /** Backslash-escapes characters that would otherwise turn a prompt into markdown formatting. */
@@ -176,6 +206,12 @@ export function chip(text: string): string {
     .filter(Boolean)
     .map((line) => `> *${escapeMarkdown(line)}*`)
     .join("  \n");
+}
+
+/** How many days pasted images are kept (0 = forever); 30 unless changed in preferences. */
+export function keepImageDays(prefs: { keepImages?: string }): number {
+  const days = parseInt(prefs.keepImages ?? "30", 10);
+  return Number.isFinite(days) && days >= 0 ? days : 30;
 }
 
 /** Characters of recent conversation to show before folding older turns away. */
@@ -197,8 +233,22 @@ export function firstVisibleIndex(messages: Msg[]): number {
   return start;
 }
 
+/** Images waiting to be sent with the next message, shown under the open chat. */
+export function pendingBlock(dir: string, pending: string[]): string {
+  if (!pending.length) return "";
+  const label = pending.length === 1 ? "1 image attached · ⌘⇧⌫ to remove" : `${pending.length} images attached · ⌘⇧⌫ to remove one`;
+  return `---\n\n${thumbnails(dir, pending, 120)}\n\n_${label}_`;
+}
+
 /** The conversation as one markdown document: your messages as chips, Claude's as plain text. */
-export function transcript(chat: Chat, currentModel: string, markUrl?: string, showAll = false): string {
+export function transcript(
+  chat: Chat,
+  currentModel: string,
+  markUrl?: string,
+  showAll = false,
+  images: { dir: string; pending: string[] } = { dir: "", pending: [] },
+): string {
+  const pending = pendingBlock(images.dir, images.pending);
   if (chat.messages.length === 0) {
     return [
       markUrl ? `![](${markUrl}?raycast-width=64&raycast-height=64)` : "",
@@ -207,9 +257,10 @@ export function transcript(chat: Chat, currentModel: string, markUrl?: string, s
       "",
       "Ask anything in the bar above and press `Enter`.",
       "",
-      "`⌘P` Switch model  ·  `⌘N` New chat  ·  `⌘1–9` Jump to chat",
+      "`⌘P` Switch model  ·  `⌘N` New chat  ·  `⌘1–9` Jump to chat  ·  `⌘V` Paste image",
       "",
       `_${currentModel}_`,
+      ...(pending ? ["", pending] : []),
     ].join("\n");
   }
   const start = showAll ? 0 : firstVisibleIndex(chat.messages);
@@ -218,13 +269,17 @@ export function transcript(chat: Chat, currentModel: string, markUrl?: string, s
     ? [`_↑ ${hiddenTurns} earlier ${hiddenTurns === 1 ? "message" : "messages"} · ⌘E to show all_`]
     : [];
   const body = chat.messages.slice(start).map((m) => {
-    if (m.role === "user") return chip(m.content);
+    if (m.role === "user") {
+      const shown = thumbnails(images.dir, m.images, 160);
+      const gone = m.images?.length && !shown ? "_Image no longer kept_" : "";
+      return [shown || gone, chip(m.content)].filter(Boolean).join("\n\n");
+    }
     if (m.error) return `⚠️ _${m.content}_`;
     return [activityLine(m), m.content || (m.activity ? "" : "_Thinking…_"), sourcesLine(m)]
       .filter(Boolean)
       .join("\n\n");
   });
-  return [...header, ...body].join("\n\n");
+  return [...header, ...body, ...(pending ? [pending] : [])].join("\n\n");
 }
 
 const cleanQuery = (q: string) => q.replace(/[_*`[\]]/g, "").slice(0, 80);
@@ -263,7 +318,7 @@ export function sourcesLine(m: Msg): string {
 
 export function plainTranscript(chat: Chat): string {
   return toApiMessages(chat.messages)
-    .map((m) => `${m.role === "user" ? "You" : "Claude"}: ${m.content}`)
+    .map((m) => `${m.role === "user" ? "You" : "Claude"}: ${m.images?.length ? "[image] " : ""}${m.content}`)
     .join("\n\n");
 }
 
@@ -590,6 +645,9 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
   const [model, setModel] = useState(FALLBACK_MODEL);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [updateCount, setUpdateCount] = useState(() => lastUpdateCount(environment.supportPath, folder));
+  const [pending, setPending] = useState<string[]>([]); // pasted images waiting to be sent
+  const [attaching, setAttaching] = useState(false);
+  const imgDir = imagesDir(environment.supportPath);
 
   // Refs mirror state so async code always sees the latest values.
   const chatsRef = useRef<Chat[]>([]);
@@ -597,6 +655,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
   const modelRef = useRef(FALLBACK_MODEL);
   const modelsRef = useRef<ModelInfo[]>([]);
   const busyRef = useRef(false);
+  const pendingRef = useRef<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
   const initialText = (props.fallbackText ?? props.arguments?.prompt ?? "").trim();
@@ -612,6 +671,11 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
     if (save) {
       LocalStorage.setItem(STORE.chats, JSON.stringify(next.filter((c) => c.messages.length > 0)));
     }
+  }
+
+  function setPendingImages(next: string[]) {
+    pendingRef.current = next;
+    setPending(next);
   }
 
   function select(id: string | undefined) {
@@ -682,7 +746,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
     if (a.error || !a.content.trim()) return;
     const fast = modelsRef.current.find((m) => m.id.includes("haiku"))?.id ?? modelRef.current;
     try {
-      const title = await generateTitle(apiKey, fast, q.content, a.content);
+      const title = await generateTitle(apiKey, fast, q.content || "(shared an image)", a.content);
       if (title) commit((prev) => prev.map((c) => (c.id === chatId ? { ...c, title, aiTitled: true } : c)), true);
     } catch {
       /* titles are a nicety */
@@ -691,7 +755,8 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
 
   async function ask(text: string, targetId?: string) {
     const question = text.trim();
-    if (!question) return;
+    const images = pendingRef.current;
+    if (!question && !images.length) return;
     if (busyRef.current) {
       await showToast({ style: Toast.Style.Failure, title: "Claude is still replying", message: "Press ⌘. to stop it" });
       return;
@@ -717,8 +782,12 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
         c.id === chatId
           ? {
               ...c,
-              title: isFirst ? titleFrom(question) : c.title,
-              messages: [...c.messages, { role: "user", content: question }, { role: "assistant", content: "" }],
+              title: isFirst ? titleFrom(question) || "Image" : c.title,
+              messages: [
+                ...c.messages,
+                { role: "user", content: question, ...(images.length ? { images } : {}) },
+                { role: "assistant", content: "" },
+              ],
               updatedAt: Date.now(),
             }
           : c,
@@ -726,6 +795,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
     );
     select(chatId);
     setInput("");
+    setPendingImages([]);
     busyRef.current = true;
     setStreamingId(chatId);
     setExpandedId(null); // a new message jumps back to the latest turns
@@ -757,7 +827,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
       await runAnswer(
         apiKey,
         modelRef.current,
-        [...history, { role: "user", content: question }],
+        withImages([...history, { role: "user", content: question, images }], imgDir),
         buildTools(prefs),
         {
           onText: (chunk) => patchLast((m) => ({ ...m, activity: undefined, content: m.content + chunk })),
@@ -804,6 +874,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
 
   function deleteChat(id: string) {
     if (streamingId === id) abortRef.current?.abort();
+    removeImages(imgDir, chatsRef.current.find((c) => c.id === id)?.messages.flatMap((m) => m.images ?? []) ?? []);
     commit((prev) => prev.filter((c) => c.id !== id), true);
     const remaining = [...chatsRef.current].sort((a, b) => b.updatedAt - a.updatedAt);
     if (remaining.length) select(remaining[0].id);
@@ -818,9 +889,52 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
     });
     if (!ok) return;
     abortRef.current?.abort();
+    pruneImages(imgDir, new Set(pendingRef.current));
     const created = emptyChat();
     commit(() => [created], true);
     select(created.id);
+  }
+
+  // ---- images -------------------------------------------------------------
+
+  /**
+   * ⌘V: attaches the clipboard's image (a screenshot, a copied picture or image file). Anything
+   * else is pasted into the bar as text, as ⌘V normally would.
+   */
+  async function paste() {
+    const { text, file, html } = await Clipboard.read();
+    let source = file ? clipboardPath(file) : "";
+    if (source && !sniffImage(source)) source = "";
+    let temp = "";
+    // "Copy Image" in a browser can put the picture next to some text or HTML; look for it then too.
+    if (!source && (!text.trim() || /^image\b/i.test(text.trim()) || /<img\b/i.test(html ?? ""))) {
+      // Raw image data Raycast didn't hand over as a file: ask macOS for it.
+      temp = join(tmpdir(), `ask-claude-clipboard-${Date.now()}.png`);
+      if (await saveClipboardImage(temp)) source = temp;
+    }
+    if (!source) {
+      if (temp) rmSync(temp, { force: true });
+      if (text) setInput((prev) => prev + text);
+      else await showToast({ style: Toast.Style.Failure, title: "Nothing to paste" });
+      return;
+    }
+    setAttaching(true);
+    try {
+      const name = await prepareImage(source, imgDir, newId());
+      setPendingImages([...pendingRef.current, name]);
+    } catch (err) {
+      await showToast({ style: Toast.Style.Failure, title: "Couldn't attach the image", message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setAttaching(false);
+      if (temp) rmSync(temp, { force: true });
+    }
+  }
+
+  /** Removes one attached image (by file name), or all of them. */
+  function removeImage(which: string | "all") {
+    const removed = which === "all" ? pendingRef.current : pendingRef.current.filter((name) => name === which);
+    removeImages(imgDir, removed);
+    setPendingImages(pendingRef.current.filter((name) => !removed.includes(name)));
   }
 
   // ---- updates ------------------------------------------------------------
@@ -879,6 +993,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
         LocalStorage.getItem<string>(STORE.model),
       ]);
       const saved = loadSavedChats(rawChats);
+      pruneImages(imgDir, new Set(saved.flatMap((c) => c.messages.flatMap((m) => m.images ?? []))), keepImageDays(prefs));
       const fresh = emptyChat();
       commit(() => [fresh, ...saved]);
       select(fresh.id);
@@ -914,7 +1029,11 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
   const markUrl = `file://${encodeURI(`${environment.assetsPath}/thread-icon.png`)}`;
   const sorted = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
   const selected = chats.find((c) => c.id === selectedId);
-  const placeholder = selected && selected.messages.length > 0 ? "Reply to Claude…" : "Ask Claude anything…";
+  const placeholder = pending.length
+    ? `Ask about the ${pending.length === 1 ? "image" : "images"}…`
+    : selected && selected.messages.length > 0
+      ? "Reply to Claude…"
+      : "Ask Claude anything…";
 
   const actionsFor = (chat: Chat) => {
     const lastAnswer = [...chat.messages].reverse().find((m) => m.role === "assistant" && !m.error && m.content);
@@ -982,6 +1101,28 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
             />
           )}
           <Action title="New Chat" icon={Icon.Plus} shortcut={{ modifiers: ["cmd"], key: "n" }} onAction={newChat} />
+          <Action title="Paste Image" icon={Icon.Image} shortcut={{ modifiers: ["cmd"], key: "v" }} onAction={paste} />
+          {pending.length === 1 && (
+            <Action
+              title="Remove Image"
+              icon={Icon.XMarkCircle}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "delete" }}
+              onAction={() => removeImage(pending[0])}
+            />
+          )}
+          {pending.length > 1 && (
+            <ActionPanel.Submenu title="Remove Image" icon={Icon.XMarkCircle} shortcut={{ modifiers: ["cmd", "shift"], key: "delete" }}>
+              <Action title="All Images" icon={Icon.Trash} onAction={() => removeImage("all")} />
+              {pending.map((name, i) => (
+                <Action
+                  key={name}
+                  title={`Image ${i + 1}`}
+                  icon={{ source: join(imgDir, name), fallback: Icon.Image }}
+                  onAction={() => removeImage(name)}
+                />
+              ))}
+            </ActionPanel.Submenu>
+          )}
           {updateCount > 0 ? updateAction : null}
         </ActionPanel.Section>
 
@@ -1031,7 +1172,7 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
 
   return (
     <List
-      isLoading={!loaded || streamingId !== null}
+      isLoading={!loaded || streamingId !== null || attaching}
       filtering={false}
       searchText={input}
       onSearchTextChange={onSearchTextChange}
@@ -1057,7 +1198,14 @@ export default function Command(props: LaunchProps<{ arguments: { prompt?: strin
                 ? Icon.Message
                 : Icon.Plus
           }
-          detail={<List.Item.Detail markdown={transcript(chat, currentModel, markUrl, expandedId === chat.id)} />}
+          detail={
+            <List.Item.Detail
+              markdown={transcript(chat, currentModel, markUrl, expandedId === chat.id, {
+                dir: imgDir,
+                pending: chat.id === selectedId ? pending : [],
+              })}
+            />
+          }
           actions={actionsFor(chat)}
         />
       ))}

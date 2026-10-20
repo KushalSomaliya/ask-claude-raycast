@@ -79,6 +79,36 @@
       "required": false
     },
     {
+      "name": "keepImages",
+      "title": "Keep Images",
+      "description": "Images you paste are deleted after this long. The chat keeps its text.",
+      "type": "dropdown",
+      "default": "30",
+      "required": false,
+      "data": [
+        {
+          "title": "1 week",
+          "value": "7"
+        },
+        {
+          "title": "30 days",
+          "value": "30"
+        },
+        {
+          "title": "90 days",
+          "value": "90"
+        },
+        {
+          "title": "1 year",
+          "value": "365"
+        },
+        {
+          "title": "Forever",
+          "value": "0"
+        }
+      ]
+    },
+    {
       "name": "updateCheck",
       "title": "Automatic Update Check",
       "label": "Look for a new version on GitHub when Ask Claude opens (at most once an hour)",
